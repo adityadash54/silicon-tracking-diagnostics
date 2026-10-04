@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "silicon-tracking-diagnostics"
+version = "0.1.0"
+description = "Orchestrated AI agents to diagnose detector alignment anomalies in the sPHENIX MVTX/INTT silicon tracker"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy", "pandas"]
+
+[project.optional-dependencies]
+api = ["anthropic"]
+dev = ["pytest"]
+
+[project.scripts]
+stdiag-compare = "stdiag.compare_runs:main"
+stdiag-triage = "stdiag.triage_agent:main"
+stdiag-review = "stdiag.review:main"
+stdiag-fetch-docs = "stdiag.fetch_tracking_docs:main"
+
+[tool.setuptools]
+packages = ["stdiag"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

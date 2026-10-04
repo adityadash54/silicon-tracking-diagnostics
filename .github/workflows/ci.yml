@@ -1,0 +1,17 @@
+name: ci
+
+# Runs only the parts without AI: unit tests and the synthetic truth check.
+# No Anthropic credentials are used or needed.
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+      - run: synthetic/run_test.sh

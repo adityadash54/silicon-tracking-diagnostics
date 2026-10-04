@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+
+# External checkouts and snapshots (regenerate; see README)
+coresoftware/
+tracking_docs/
+
+# Data and generated outputs
+*.root
+*.pdf
+*.png
+labels.csv
+residual_fits_*.csv
+flags_*.csv
+summary_*.json
+report_*.md
+triage_report_*.md
+triage_dry_run_*.txt
+truth_check_*.txt
+findings_*.json
+review_*.json
+review_*.md
+expert_*.md
+check_*.md
+dialogue_*.md
+dialogue_*.json
+synthetic/output/
+
+# Example reports kept as documentation
+!synthetic/example_reports/*.md
+
+# Eval runs (keep cases, runner and grader; not transcripts or reports)
+evals/**/runs/
+evals/**/traces/
+evals/**/report.html
+evals/**/trajectory/
