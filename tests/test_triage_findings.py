@@ -40,7 +40,7 @@ def test_findings_validation(tmp_path, synthetic_outputs, monkeypatch, text,
     for name in ("flags_Iter0_vs_Iter1.csv", "summary_Iter0_vs_Iter1.json"):
         (tmp_path / name).write_bytes((synthetic_outputs / name).read_bytes())
     monkeypatch.setattr(triage_agent, "run_triage_claude_code",
-                        lambda summary, model: (text, "canned"))
+                        lambda summary, model: (text, "canned", {}))
     monkeypatch.setattr(sys, "argv", [
         "triage_agent", str(tmp_path / "flags_Iter0_vs_Iter1.csv"),
         str(tmp_path / "summary_Iter0_vs_Iter1.json"),
@@ -55,6 +55,35 @@ def test_findings_validation(tmp_path, synthetic_outputs, monkeypatch, text,
     report = (tmp_path / "triage_report_Iter0_vs_Iter1.md").read_text()
     assert "```json" not in report
     assert ("validation passed" in report) is passed
+
+
+@pytest.mark.parametrize("stdout, expected_text, expected_models", [
+    (json.dumps({"result": "Report text", "is_error": False,
+                 "modelUsage": {"claude-opus-5-5": {}},
+                 "usage": {"input_tokens": 10, "output_tokens": 5},
+                 "total_cost_usd": 0.01, "duration_ms": 1200,
+                 "num_turns": 1, "subtype": "success"}),
+     "Report text", ["claude-opus-5-5"]),
+    ("Plain text answer", "Plain text answer", []),
+])
+def test_claude_code_output_parsing(monkeypatch, synthetic_outputs, stdout,
+                                    expected_text, expected_models):
+    class Result:
+        returncode, stderr = 0, ""
+
+    Result.stdout = stdout
+    triage_agent.ComparisonData.flags = __import__("pandas").read_csv(
+        synthetic_outputs / "flags_Iter0_vs_Iter1.csv")
+    summary = json.loads(
+        (synthetic_outputs / "summary_Iter0_vs_Iter1.json").read_text())
+    monkeypatch.setattr(triage_agent.shutil, "which", lambda name: "claude")
+    monkeypatch.setattr(triage_agent.subprocess, "run",
+                        lambda *args, **kwargs: Result)
+    text, label, usage = triage_agent.run_triage_claude_code(
+        summary, "claude-opus-5-5")
+    assert text == expected_text
+    assert usage["models"] == expected_models
+    assert label == "claude-opus-5-5 via Claude Code CLI"
 
 
 def test_dry_run_sends_no_injection_truth(synthetic_outputs, capsys,

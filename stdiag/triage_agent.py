@@ -382,12 +382,13 @@ def build_offline_context(summary: dict) -> str:
     return "\n\n".join(blocks)
 
 
-def run_triage_claude_code(summary: dict, model: str) -> tuple[str, str]:
+def run_triage_claude_code(summary: dict,
+                           model: str) -> tuple[str, str, dict]:
     claude = shutil.which("claude")
     if claude is None:
         sys.exit("ERROR: the Claude Code CLI 'claude' was not found on PATH.")
 
-    command = [claude, "-p", "--output-format", "text", "--model", model,
+    command = [claude, "-p", "--output-format", "json", "--model", model,
                "--tools", "", "--strict-mcp-config", "--no-session-persistence",
                "--system-prompt", SYSTEM_PROMPT + OFFLINE_NOTE]
     # An empty working directory keeps project files (and any synthetic
@@ -400,11 +401,21 @@ def run_triage_claude_code(summary: dict, model: str) -> tuple[str, str]:
         except subprocess.TimeoutExpired:
             sys.exit("ERROR: the Claude Code CLI did not finish in 30 minutes.")
 
-    text = result.stdout.strip()
-    if result.returncode != 0 or not text:
+    try:
+        reply = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        reply = {"result": result.stdout}
+    text = str(reply.get("result", "")).strip()
+    if result.returncode != 0 or reply.get("is_error") or not text:
         sys.exit(f"ERROR: the Claude Code CLI failed (exit {result.returncode})"
                  f": {result.stderr.strip() or 'no output'}")
-    return text, f"{model} via Claude Code CLI"
+    usage = {"models": sorted(reply.get("modelUsage", {})),
+             "usage": reply.get("usage", {}),
+             "total_cost_usd": reply.get("total_cost_usd"),
+             "duration_ms": reply.get("duration_ms"),
+             "num_turns": reply.get("num_turns"),
+             "subtype": reply.get("subtype")}
+    return text, f"{model} via Claude Code CLI", usage
 
 
 FINDINGS_BLOCK = re.compile(r"```json\s*(\{.*\})\s*```\s*$", re.DOTALL)
@@ -525,6 +536,9 @@ def main() -> None:
                              "`claude -p` CLI on your Claude Code login")
     parser.add_argument("--dry-run", action="store_true",
                         help="print what would be sent and exit")
+    parser.add_argument("--usage-out", type=Path,
+                        help="write the run's model, tokens, cost and time "
+                             "as JSON (claude-code backend)")
     args = parser.parse_args()
 
     ComparisonData.flags = pd.read_csv(
@@ -544,12 +558,13 @@ def main() -> None:
     if args.backend == "claude-code":
         print("Note: --effort and --no-fallback do not apply to the "
               "claude-code backend.", file=sys.stderr)
-        triage_text, served_model = run_triage_claude_code(
+        triage_text, served_model, usage = run_triage_claude_code(
             ComparisonData.summary, args.model)
     else:
         triage_text, served_model = run_triage(
             ComparisonData.summary, args.model, args.effort,
             not args.no_fallback)
+        usage = {}
     stem = args.flags.stem.removeprefix("flags_")
     out_path = args.out or args.flags.with_name(f"triage_report_{stem}.md")
     report_text, findings = split_findings(triage_text)
@@ -571,6 +586,8 @@ def main() -> None:
         ComparisonData.summary, args.flags, args.summary, served_model,
         report_text, validation_line(findings_path.name, validation)))
     print(f"Wrote {out_path} and {findings_path}")
+    if args.usage_out:
+        args.usage_out.write_text(json.dumps(usage, indent=2) + "\n")
     if not validation["passed"]:
         print(f"WARNING: {validation_line(findings_path.name, validation)}",
               file=sys.stderr)

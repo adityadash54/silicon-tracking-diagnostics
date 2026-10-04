@@ -85,9 +85,10 @@ def matches(injection: dict, label: str, detector: str, layer: int,
             and (injection["coord"] is None or coord == injection["coord"]))
 
 
-def entries_override(detector, layer, stave, chip, coord):
+def entries_override(detector, layer, stave, chip, coord,
+                     injections: list[dict] | None = None):
     # Entry overrides apply to every label so both inputs share the statistics.
-    for injection in INJECTIONS:
+    for injection in INJECTIONS if injections is None else injections:
         if "entries" in injection and any(
                 matches(injection, label, detector, layer, stave, chip, coord)
                 for label in injection["labels"]):
@@ -95,7 +96,12 @@ def entries_override(detector, layer, stave, chip, coord):
     return None
 
 
-def build_tables(seed: int) -> dict[str, pd.DataFrame]:
+def build_tables(seed: int, injections: list[dict] | None = None,
+                 labels: dict[str, str] | None = None
+                 ) -> dict[str, pd.DataFrame]:
+    """Fit tables per label; defaults are the synthetic test's injections."""
+    injections = INJECTIONS if injections is None else injections
+    labels = LABELS if labels is None else labels
     rng = np.random.default_rng(seed)
     baseline = {}
     for detector, (layers, staves, chips) in GEOMETRY.items():
@@ -110,11 +116,11 @@ def build_tables(seed: int) -> dict[str, pd.DataFrame]:
                             int(rng.poisson(NOMINAL_ENTRIES[detector])))
 
     tables = {}
-    for label, listfile in LABELS.items():
+    for label, listfile in labels.items():
         rows = []
         for key, (offset, sigma, entries) in baseline.items():
             detector, layer, stave, chip, coord = key
-            active = [injection for injection in INJECTIONS
+            active = [injection for injection in injections
                       if matches(injection, label, *key)]
             if any(injection.get("missing") for injection in active):
                 continue
@@ -122,7 +128,7 @@ def build_tables(seed: int) -> dict[str, pd.DataFrame]:
                                    for injection in active)
             true_sigma = sigma * np.prod([injection.get("sigma_scale", 1.0)
                                           for injection in active])
-            override = entries_override(*key)
+            override = entries_override(*key, injections)
             n_entries = override if override is not None else int(
                 rng.poisson(entries))
 
