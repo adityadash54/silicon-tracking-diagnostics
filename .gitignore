@@ -1,3 +1,8 @@
+AGENTS.md
+.DS_Store
+*/.DS_Store
+*.swp
+
 # Python
 __pycache__/
 *.py[cod]
@@ -31,9 +36,19 @@ check_*.md
 dialogue_*.md
 dialogue_*.json
 synthetic/output/
+synthetic/pipeline_output/
+/stdiag_manual/
+
+# ROOT ACLiC build products
+*_C.so
+*_C.d
+*_ACLiC_dict_rdict.pcm
 
 # Example reports kept as documentation
 !synthetic/example_reports/*.md
+
+# Reference fit tables of the synthetic pipeline (synthetic/reference/README.md)
+!/synthetic/reference/residual_fits_*.csv
 
 # Eval runs (keep cases, runner and grader; not transcripts or reports)
 evals/**/runs/

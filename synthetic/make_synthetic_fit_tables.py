@@ -2,7 +2,7 @@
 """Write synthetic layer-1 fit tables with known injected changes.
 
 Produces residual_fits_<label>.csv files in the format written by
-../fit_residuals_to_table.C, plus injections.csv describing every injected
+../macros/plot_fits_overlaid_stavechip.C, plus injections.csv describing every injected
 change, so the comparison framework can be checked against a known answer.
 
 Model per (label, detector, layer, stave, chip, coord):
@@ -29,6 +29,11 @@ GEOMETRY = {  # detector: (layers, staves per layer, chips per stave)
     "MVTX": ([0, 1, 2], [12, 16, 20], 9),
     "INTT": ([3, 4, 5, 6], [12, 12, 16, 16], 4),
 }
+# Geometry and nominal widths come from public sPHENIX specifications: the
+# widths are approximately pitch/sqrt(12) (ALPIDE 26.88 x 29.24 um pixels;
+# INTT 78 um strip pitch, 16 mm strips for z), slightly widened for the track
+# uncertainty. No real-data values are used. make_synthetic_ntp.C uses the
+# same numbers.
 NOMINAL_SIGMA_MM = {("MVTX", "rphi"): 0.007, ("MVTX", "z"): 0.008,
                     ("INTT", "rphi"): 0.025, ("INTT", "z"): 4.6}
 NOMINAL_ENTRIES = {"MVTX": 3000, "INTT": 6000}

@@ -1,0 +1,10 @@
+name,labels,detector,layer,staves,chips,coord,offset_mm,sigma_scale,entries,missing,description
+stave_shift_rphi,Iter1,MVTX,1,4,all,rphi,0.008,1.0,,False,Whole MVTX stave displaced +8 um in local r-phi
+chip_broadened,Iter1;Iter2,MVTX,0,2,5,both,0.0,1.4,,False,One MVTX chip 40% broader in both coordinates
+chip_shift_z,Iter1;Iter2,MVTX,2,10,3,z,-0.012,1.0,,False,One MVTX chip displaced -12 um in local z
+sub_threshold_shift,Iter1,MVTX,2,7,0,rphi,0.003,1.0,,False,Statistically significant +3 um shift below the 5 um minimum shift (must NOT be flagged)
+intt_sensor_shift,Iter1,INTT,4,6,1,rphi,0.04,1.0,,False,One INTT sensor displaced +40 um in local r-phi
+low_stats_width,Iter1,MVTX,0,9,8,rphi,0.0,1.3,40,False,+30% width on a chip with only 40 entries per input (statistically limited; may or may not be flagged)
+low_stats_ladder,Iter0;Iter1;Iter2,INTT,3,3,all,both,0.0,1.0,5,False,INTT ladder with 5 entries per sensor in every input (not comparable)
+missing_ladder,Iter1,INTT,5,9,all,both,0.0,1.0,,True,INTT ladder absent from Iter1 (not comparable)
+half_layer_shift_z,Iter2,MVTX,2,0;1;2;3;4;5;6;7;8;9,all,z,0.006,1.0,,False,Half of MVTX layer 2 (staves 0-9) displaced +6 um in local z
