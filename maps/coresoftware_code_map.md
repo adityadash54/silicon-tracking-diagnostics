@@ -23,7 +23,7 @@ and `git diff`, since ntuples may have been produced from an uncommitted build.
 | Acts geometry | `offline/packages/trackreco/MakeActsGeometry.cc`: `buildAllGeometry` (l. 377), `buildActsSurfaces` (l. 634) | Creates the detector surfaces (and their mapping to hitset keys). |
 | Track fit | `offline/packages/trackreco/PHActsTrkFitter.cc` (also `WeightedFitter.cc`) | Produces the fitted track states. |
 | Residual definition | `offline/packages/trackreco/ActsAlignmentStates.cc`: l. 149 `localResidual = localMeas - localState`; stored at l. 221 | Local residual = measurement − fitted state (sign convention). |
-| `ntp` booking and fill | `offline/packages/TrackerMillepedeAlignment/MakeMilleFiles.cc`: `ntp` columns (`layer:stave:chip:residualX:residualY:...`), residual read from the alignment state, and fill at l. 174–182, 1135, 1314 in the working tree; l. 101–108, 562, 735 at HEAD 7e9e8e62b (the later columns differ) | Writes the tree read by `fit_residuals_to_table.C` and the plot macros; also applies track/vertex selection. |
+| `ntp` booking and fill | `offline/packages/TrackerMillepedeAlignment/MakeMilleFiles.cc`: `ntp` columns (`layer:stave:chip:residualX:residualY:...`), residual read from the alignment state, and fill at l. 174–182, 1135, 1314 in the working tree; l. 101–108, 562, 735 at HEAD 7e9e8e62b (the later columns differ) | Writes the tree read by `plot_fits_overlaid_stavechip.C` and the other plot macros; also applies track/vertex selection. |
 | Related | `offline/packages/TrackerMillepedeAlignment/HelicalFitter.cc` (own `ntp` with `crosshalfmvtx`), `offline/packages/TrackingDiagnostics/TrackResiduals.cc` (`fillClusterBranchesKF`, l. 1039) | Alternative residual producers; useful for cross-checks. |
 
 ## Finding type → where to look
