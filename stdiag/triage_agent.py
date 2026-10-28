@@ -46,7 +46,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from stdiag.compare_runs import stave_row_mask
+
 DEFAULT_MODEL = "claude-opus-5-5"
+# chip is the chip/sensor id for MVTX/INTT (-1 = whole stave/ladder) and the
+# track-phi bin for VERTEX rows (-1 = all tracks, 0-13 = phi bins over
+# [-pi, pi)).
 ROW_COLUMNS = [
     "detector", "layer", "stave", "chip", "coord", "comparison_status",
     "flag_mean", "flag_width", "delta_mu_mm", "mu_z", "separation",
@@ -63,29 +68,64 @@ layers 0-2) and INTT sensor (4 per ladder, layers 3-6), in local r-phi and \
 local z, for a reference input and a comparison input, and has flagged \
 entries using fixed criteria that you can read with get_comparison_summary.
 
+MVTX and INTT rows with chip = -1 are stave rows: the same fit applied to the \
+sum of all chips/sensors of that stave/ladder. They are not chips and not \
+independent of the chip rows of their stave; never count them as chips. A \
+single chip shifted within the core of the stave distribution moves the \
+stave mean by about its share of the stave entries (about 1/9 of its shift \
+for MVTX, 1/4 for INTT); a chip shifted beyond the core barely moves it. \
+INTT z stave rows are only indicative.
+
+The tables may also contain detector "VERTEX" rows: Gaussian fits to the \
+track-to-vertex residuals -DCA_xy (coord "dca_xy") and -DCA_z (coord \
+"dca_z"), with layer = -1 and stave = -1. These are not chips. chip = -1 is \
+the distribution of all tracks; chip = 0-13 are 14 equal bins of track phi \
+over [-pi, pi) (bin k covers -pi + k*2pi/14 to -pi + (k+1)*2pi/14). Track \
+phi is the momentum azimuth at the point of closest approach, so a phi bin \
+selects tracks through that azimuthal sector of the silicon. The phi bins \
+and chip -1 use the same tracks, so they are not independent.
+
 The flags are final. Never recompute, add or remove flags. Your job is to \
 interpret them using the tools, which read the comparison tables.
 
 Group the flagged entries into:
 A. Coherent stave/ladder-wide mean shifts (most chips of one stave shift in \
-the same direction): likely stave-level misalignment.
-B. Isolated chip/sensor mean shifts: likely chip-level misalignment, or a \
-local hardware/calibration change.
+the same direction, and the stave row shifts with them): likely stave-level \
+misalignment.
+B. Isolated chip/sensor mean shifts (the stave row unchanged, or shifted by \
+only about the chip's share of the entries): likely chip-level misalignment, \
+or a local hardware/calibration change.
 C. Width-only changes: check sigma_rel_significance; values below ~2 are \
 compatible with statistical fluctuation.
 D. Mean and width changes together.
-E. Entries near the statistics limit or with suspicious fits.
+E. Statistics, fit or coverage issues: entries near the statistics limit or \
+with suspicious fits, not-comparable entries (missing, low statistics or a \
+failed fit in either input) and notable-unflagged entries.
 Also report patterns across layers, staves, coordinates and the \
 not-comparable entries (for example a whole stave missing in one input). \
 Use list_notable_unflagged for entries that are noteworthy but not flagged \
 (significant shifts below the minimum shift, highly significant small width \
 changes, low statistics); mention them, but they stay unflagged.
+Put a flagged stave row in the same finding as the chips of its stave that \
+show the same effect; on its own it goes in the group that fits its chips.
+
+VERTEX entries go in their own findings, never mixed with chip entries. Put \
+chip -1 and the phi bins that show the same effect in one finding. Use group \
+A when most phi bins shift coherently (in dca_xy a transverse offset between \
+the silicon and the vertex or beam position gives a sinusoidal shift versus \
+phi that can average to almost zero in chip -1; describe its amplitude and \
+phase), B for a shift in only one or two phi bins, and C, D and E as for \
+chips.
 
 Rules:
 - Base every statement on tool output. Quote layer, stave, chip, coordinate \
-and numbers. Report shifts and widths in micrometres for MVTX and INTT r-phi, \
-and in millimetres for INTT z.
+and numbers. Report shifts and widths in micrometres for MVTX, INTT r-phi \
+and VERTEX, and in millimetres for INTT z.
 - INTT z residuals are not Gaussian, so treat INTT z fits as indicative only.
+- The event vertex is reconstructed from tracks that include the measured \
+one, which biases VERTEX residuals toward zero. A VERTEX change can come from \
+the silicon alignment, the vertex finding or the beam position; do not \
+attribute it to one cause.
 - Refer to the inputs only by their labels. You do not know the detector \
 configuration behind a label; never guess it. The user records \
 configurations by hand.
@@ -103,9 +143,10 @@ After the report, end with one fenced ```json block and nothing after it:
 {"findings": [{"id": "F1", "group": "A", "title": "...", "priority": 1,
   "entries": [{"detector": "MVTX", "layer": 1, "stave": 4, "chip": 0,
   "coord": "rphi"}], "evidence": "one line with the key numbers"}]}
-Number the ids F1, F2, ... in priority order. Every flagged entry must \
-appear in exactly one finding. Not-comparable or notable-unflagged entries \
-may form findings of their own.
+Number the ids F1, F2, ... in priority order. "group" must be exactly one \
+letter: A, B, C, D or E. Every flagged entry must appear in exactly one \
+finding. Not-comparable or notable-unflagged entries may form findings of \
+their own, in group E.
 """
 
 
@@ -161,9 +202,11 @@ def list_flagged_chips(detector: str = "", layer: int = -1, coord: str = "",
     """List flagged entries with their fit comparison metrics.
 
     Args:
-        detector: "MVTX" or "INTT"; empty for both.
-        layer: Layer number 0-6; -1 for all layers.
-        coord: "rphi" or "z"; empty for both.
+        detector: "MVTX", "INTT" or "VERTEX"; empty for all.
+        layer: Layer number 0-6; -1 for all layers (VERTEX rows have layer
+            -1; select them with detector="VERTEX").
+        coord: "rphi" or "z" (MVTX/INTT), "dca_xy" or "dca_z" (VERTEX);
+            empty for all.
         limit: Maximum number of rows to return.
     """
     frame = filter_rows(detector, layer, coord)
@@ -174,46 +217,64 @@ def get_stave_overview(detector: str = "", coord: str = "",
                        only_with_flags: bool = True, layer: int = -1) -> str:
     """Summarise each stave/ladder: comparable and flagged chip counts and the
     spread of mean shifts, to separate stave-wide shifts from single chips.
+    The chip counts and shift statistics use the chip rows only; the stave
+    row (chip -1) is reported separately as stave_delta_mu_mm (null if it is
+    absent or not comparable) and stave_flagged. VERTEX rows form one group
+    (layer -1, stave -1) whose "chips" are chip -1 and the 14 track-phi bins;
+    they have no stave row.
 
     Args:
-        detector: "MVTX" or "INTT"; empty for both.
-        coord: "rphi" or "z"; empty for both.
-        only_with_flags: If true, return only staves with at least one flag.
-        layer: Layer number 0-6; -1 for all layers.
+        detector: "MVTX", "INTT" or "VERTEX"; empty for all.
+        coord: "rphi" or "z" (MVTX/INTT), "dca_xy" or "dca_z" (VERTEX);
+            empty for all.
+        only_with_flags: If true, return only staves with at least one flag
+            (chip or stave row).
+        layer: Layer number 0-6; -1 for all layers (VERTEX rows have layer
+            -1; select them with detector="VERTEX").
     """
+    keys = ["detector", "layer", "stave", "coord"]
     frame = filter_rows(detector, layer, coord)
-    comparable = frame.loc[frame["comparable"]]
-    shifts = comparable.groupby(["detector", "layer", "stave", "coord"])[
-        "delta_mu_mm"]
+    is_stave_row = stave_row_mask(frame)
+    stave_rows = frame.loc[is_stave_row].set_index(keys)
+    chips = frame.loc[~is_stave_row]
+    comparable = chips.loc[chips["comparable"]]
+    shifts = comparable.groupby(keys)["delta_mu_mm"]
+    by_stave = chips.groupby(keys)
     overview = pd.DataFrame({
-        "chips": frame.groupby(["detector", "layer", "stave", "coord"]).size(),
-        "comparable": comparable.groupby(
-            ["detector", "layer", "stave", "coord"]).size(),
-        "flagged": frame.groupby(["detector", "layer", "stave", "coord"])[
-            "flagged"].sum(),
-        "flag_mean": frame.groupby(["detector", "layer", "stave", "coord"])[
-            "flag_mean"].sum(),
-        "flag_width": frame.groupby(["detector", "layer", "stave", "coord"])[
-            "flag_width"].sum(),
+        "chips": by_stave.size(),
+        "comparable": comparable.groupby(keys).size(),
+        "flagged": by_stave["flagged"].sum(),
+        "flag_mean": by_stave["flag_mean"].sum(),
+        "flag_width": by_stave["flag_width"].sum(),
         "median_delta_mu_mm": shifts.median(),
         "std_delta_mu_mm": shifts.std(),
         "fraction_positive_shift": shifts.apply(
             lambda values: float(np.mean(values > 0))),
-    }).fillna({"comparable": 0}).reset_index()
+        "stave_delta_mu_mm": stave_rows["delta_mu_mm"].where(
+            stave_rows["comparable"]),
+        "stave_flagged": stave_rows["flagged"].astype(float),
+    }).fillna({"chips": 0, "comparable": 0, "flagged": 0, "flag_mean": 0,
+               "flag_width": 0, "stave_flagged": 0}).reset_index()
+    overview["stave_flagged"] = overview["stave_flagged"].astype(bool)
     if only_with_flags:
-        overview = overview.loc[overview["flagged"] > 0]
-    overview = overview.sort_values(["flagged", "detector", "layer", "stave"],
-                                    ascending=[False, True, True, True])
+        overview = overview.loc[(overview["flagged"] > 0)
+                                | overview["stave_flagged"]]
+    overview = overview.sort_values(
+        ["flagged", "stave_flagged", "detector", "layer", "stave"],
+        ascending=[False, False, True, True, True])
     return to_json(json.loads(overview.to_json(orient="records",
                                                double_precision=6)))
 
 
 def get_stave_rows(layer: int, stave: int) -> str:
-    """Return every chip/sensor row (both coordinates) of one stave/ladder.
+    """Return every chip/sensor row (both coordinates) of one stave/ladder,
+    including its stave row (chip -1) when the table has one. layer -1 with
+    stave -1 returns every VERTEX row (chip -1 and the 14 track-phi bins,
+    both coordinates).
 
     Args:
-        layer: Layer number 0-6.
-        stave: Stave (MVTX) or ladder (INTT) number.
+        layer: Layer number 0-6, or -1 for VERTEX.
+        stave: Stave (MVTX) or ladder (INTT) number, or -1 for VERTEX.
     """
     flags = ComparisonData.flags
     frame = flags.loc[(flags["layer"] == layer) & (flags["stave"] == stave)]
@@ -225,7 +286,7 @@ def list_not_comparable(detector: str = "", limit: int = 200) -> str:
     failed fit in either input).
 
     Args:
-        detector: "MVTX" or "INTT"; empty for both.
+        detector: "MVTX", "INTT" or "VERTEX"; empty for all.
         limit: Maximum number of rows to return.
     """
     frame = filter_rows(detector)
@@ -244,7 +305,7 @@ def list_notable_unflagged(detector: str = "", limit: int = 200) -> str:
     The reason column says which.
 
     Args:
-        detector: "MVTX" or "INTT"; empty for both.
+        detector: "MVTX", "INTT" or "VERTEX"; empty for all.
         limit: Maximum number of rows to return.
     """
     frame = filter_rows(detector)
@@ -360,8 +421,10 @@ message; use only that data.
 
 def build_offline_context(summary: dict) -> str:
     flags = ComparisonData.flags
-    flagged_staves = (flags.loc[flags["flagged"], ["layer", "stave"]]
-                      .drop_duplicates().sort_values(["layer", "stave"]))
+    flagged_staves = (
+        flags.loc[flags["flagged"], ["detector", "layer", "stave"]]
+        .drop_duplicates().sort_values(["detector", "layer", "stave"]))
+    flagged_layers = flagged_staves[["detector", "layer"]].drop_duplicates()
     blocks = [
         user_message(summary).replace(
             "Start with get_comparison_summary, then investigate",
@@ -369,12 +432,16 @@ def build_offline_context(summary: dict) -> str:
         "## get_comparison_summary()\n" + get_comparison_summary(),
         "## list_flagged_chips(limit=2000)\n" + list_flagged_chips(limit=2000),
     ]
-    blocks += [f"## get_stave_overview(only_with_flags=False, layer={layer})\n"
-               + get_stave_overview(only_with_flags=False, layer=int(layer))
-               for layer in sorted(flagged_staves["layer"].unique())]
+    # The detector filter matters for VERTEX: its layer -1 would otherwise
+    # mean "all layers" and return every stave.
+    blocks += [f"## get_stave_overview(detector=\"{detector}\", "
+               f"only_with_flags=False, layer={layer})\n"
+               + get_stave_overview(detector=detector, only_with_flags=False,
+                                    layer=int(layer))
+               for detector, layer in flagged_layers.itertuples(index=False)]
     blocks += [f"## get_stave_rows(layer={layer}, stave={stave})\n"
                + get_stave_rows(int(layer), int(stave))
-               for layer, stave in flagged_staves.itertuples(index=False)]
+               for _, layer, stave in flagged_staves.itertuples(index=False)]
     blocks.append("## list_not_comparable(limit=2000)\n"
                   + list_not_comparable(limit=2000))
     blocks.append("## list_notable_unflagged(limit=2000)\n"
@@ -419,7 +486,10 @@ def run_triage_claude_code(summary: dict,
 
 
 FINDINGS_BLOCK = re.compile(r"```json\s*(\{.*\})\s*```\s*$", re.DOTALL)
+# chip: chip/sensor id for MVTX/INTT (-1 = whole stave/ladder), track-phi bin
+# for VERTEX rows.
 ENTRY_KEYS = ["detector", "layer", "stave", "chip", "coord"]
+GROUPS = {"A", "B", "C", "D", "E"}
 
 
 def split_findings(triage_text: str) -> tuple[str, dict | None]:
@@ -456,12 +526,16 @@ def validate_findings(findings: dict | None) -> dict:
                 unknown.append(list(key))
             assigned.setdefault(key, []).append(str(finding.get("id")))
 
+    invalid_groups = [f"{finding.get('id')}: {finding.get('group')!r}"
+                      for finding in findings["findings"]
+                      if finding.get("group") not in GROUPS]
     unassigned = sorted(flagged - assigned.keys())
     duplicated = {" ".join(key): ids for key, ids in assigned.items()
                   if key in flagged and len(ids) > 1}
-    return {"passed": not unassigned and not unknown,
+    return {"passed": not unassigned and not unknown and not invalid_groups,
             "unassigned_flagged": [list(key) for key in unassigned],
             "unknown_entries": unknown,
+            "invalid_groups": invalid_groups,
             "flagged_in_several_findings": duplicated}
 
 
@@ -474,7 +548,8 @@ def validation_line(findings_name: str, validation: dict) -> str:
     return (f"Structured findings: {findings_name}, validation FAILED: "
             f"{len(validation['unassigned_flagged'])} flagged entries not in "
             f"any finding, {len(validation['unknown_entries'])} unknown "
-            "entries.")
+            f"entries, {len(validation.get('invalid_groups', []))} findings "
+            "with a group other than A-E.")
 
 
 def build_report(summary: dict, flags_path: Path, summary_path: Path,

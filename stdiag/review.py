@@ -56,6 +56,8 @@ DIALOGUE_STATUS_TEXT = {
     "paused_at_limit": "awaiting your approval for another round",
 }
 
+# chip is the chip/sensor id for MVTX/INTT and the track-phi bin for VERTEX
+# rows (-1 = all tracks, 0-13 = phi bins over [-pi, pi)).
 ENTRY_KEYS = ["detector", "layer", "stave", "chip", "coord"]
 ROW_COLUMNS = ENTRY_KEYS + [
     "comparison_status", "flag_mean", "flag_width", "delta_mu_mm", "mu_z",

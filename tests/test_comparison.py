@@ -7,7 +7,7 @@ import json
 import pandas as pd
 import pytest
 
-from stdiag.compare_runs import parse_min_shift_overrides
+from stdiag.compare_runs import build_summary, parse_min_shift_overrides
 from tests.conftest import run_module
 
 
@@ -39,6 +39,25 @@ def test_report_carries_label_configuration_table(synthetic_outputs):
     report = (synthetic_outputs / "report_Iter0_vs_Iter1.md").read_text()
     assert "Detector configuration (fill in)" in report
     assert "| reference | Iter0 | ntuple_list1.txt" in report
+
+
+def test_summary_keeps_stave_rows_apart(flags_with_stave_rows):
+    flags, _ = flags_with_stave_rows
+    without_stave_rows = flags.loc[(flags["chip"] >= 0)
+                                   | (flags["detector"] == "VERTEX")]
+    summary = build_summary(flags, {}, {})
+    reference = build_summary(without_stave_rows, {}, {})
+
+    assert summary["counts_by_level"]["stave"]["rows"] == 2
+    assert summary["counts_by_level"]["stave"]["flagged"] == 2
+    assert (summary["counts_by_level"]["chip"]
+            == reference["counts_by_level"]["chip"])
+
+    def chip_level(rows):
+        return [row for row in rows if row["level"] == "chip"]
+
+    assert (chip_level(summary["by_detector_layer_coord"])
+            == chip_level(reference["by_detector_layer_coord"]))
 
 
 def test_min_shift_override():

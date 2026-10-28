@@ -2,7 +2,7 @@
 """Layer 2: compare per-chip residual fits between inputs and flag changed chips.
 
 Runs entirely locally: it reads the CSV tables written by
-fit_residuals_to_table.C and writes CSV, JSON and Markdown files. It imports no
+macros/plot_fits_overlaid_stavechip.C and writes CSV, JSON and Markdown files. It imports no
 network libraries and sends nothing to any external service.
 
 Criteria (input 1 = reference, input 2 = comparison), evaluated separately for
@@ -12,6 +12,9 @@ every (detector, layer, stave, chip, coord):
           AND |mu2 - mu1| > minimum shift for (detector, coord)
   A chip is flagged if the width OR the mean criterion fires. Both fits must
   have fit_status == "ok"; anything else is reported as not comparable.
+MVTX/INTT rows with chip = -1 are fits to the sum of all chips of the
+stave/ladder ("stave rows"); they get the same criteria and minimum shifts as
+the chips and are counted separately (level "stave") in the summary.
 
 Usage:
   python -m stdiag.compare_runs residual_fits_Iter0.csv residual_fits_Iter1.csv \
@@ -32,7 +35,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# chip is the chip/sensor id for MVTX/INTT (-1 = whole stave/ladder) and the
+# track-phi bin for VERTEX rows (-1 = all tracks, 0-13 = phi bins over
+# [-pi, pi)).
 KEY_COLUMNS = ["detector", "layer", "stave", "chip", "coord"]
+STAVE_CHIP = -1
 FIT_COLUMNS = [
     "entries", "entries_in_fit_window", "populated_bins", "fit_status",
     "mu_mm", "mu_err_mm", "sigma_mm", "sigma_err_mm", "chi2", "ndf",
@@ -47,7 +54,24 @@ DEFAULT_MIN_SHIFT_MM = {
     ("MVTX", "z"): 0.005,
     ("INTT", "rphi"): 0.020,
     ("INTT", "z"): 1.0,
+    # Track-to-vertex residuals (-DCA) from track_ntp; their chip id is the
+    # track-phi bin (chip -1 = all tracks, chip 0-13 = phi bins).
+    ("VERTEX", "dca_xy"): 0.010,
+    ("VERTEX", "dca_z"): 0.020,
 }
+
+
+def stave_row_mask(frame: pd.DataFrame) -> pd.Series:
+    """True for MVTX/INTT whole-stave rows (chip = -1)."""
+    return (frame["detector"] != "VERTEX") & (frame["chip"] == STAVE_CHIP)
+
+
+def row_level(frame: pd.DataFrame) -> pd.Series:
+    """Return the level of every row: chip, stave or vertex."""
+    return pd.Series(
+        np.select([frame["detector"] == "VERTEX", stave_row_mask(frame)],
+                  ["vertex", "stave"], default="chip"),
+        index=frame.index)
 
 
 def sha256sum(path: Path) -> str:
@@ -82,10 +106,13 @@ def load_fit_table(path: Path) -> pd.DataFrame:
 def parse_min_shift_overrides(overrides: list[str]) -> dict:
     minimum_shift = dict(DEFAULT_MIN_SHIFT_MM)
     for override in overrides:
-        match = re.fullmatch(r"(MVTX|INTT):(rphi|z)=([0-9.eE+-]+)", override)
-        if not match:
-            sys.exit(f"ERROR: --min-shift expects DETECTOR:COORD=MM "
-                     f"(e.g. INTT:z=0.5), got '{override}'")
+        match = re.fullmatch(r"(\w+):(\w+)=([0-9.eE+-]+)", override)
+        if not match or (match.group(1), match.group(2)) not in minimum_shift:
+            valid = ", ".join(f"{detector}:{coord}"
+                              for detector, coord in DEFAULT_MIN_SHIFT_MM)
+            sys.exit(f"ERROR: --min-shift expects DETECTOR:COORD=MM with "
+                     f"DETECTOR:COORD one of {valid} (e.g. INTT:z=0.5), "
+                     f"got '{override}'")
         minimum_shift[(match.group(1), match.group(2))] = float(match.group(3))
     return minimum_shift
 
@@ -180,11 +207,16 @@ def count_flags(frame: pd.DataFrame) -> dict:
 
 
 def build_summary(flags: pd.DataFrame, inputs: dict, criteria: dict) -> dict:
+    # level keeps whole-stave rows out of the per-layer chip counts.
+    levels = flags.assign(level=row_level(flags))
     by_layer = []
-    for (detector, layer, coord), group in flags.groupby(
-            ["detector", "layer", "coord"], sort=True):
+    for (detector, layer, coord, level), group in levels.groupby(
+            ["detector", "layer", "coord", "level"], sort=True):
         by_layer.append({"detector": detector, "layer": int(layer),
-                        "coord": coord, **count_flags(group)})
+                         "coord": coord, "level": level,
+                         **count_flags(group)})
+    by_level = {level: count_flags(group)
+                for level, group in levels.groupby("level", sort=True)}
 
     not_comparable = (
         flags.loc[~flags["comparable"]]
@@ -198,6 +230,7 @@ def build_summary(flags: pd.DataFrame, inputs: dict, criteria: dict) -> dict:
         "inputs": inputs,
         "criteria": criteria,
         "counts": count_flags(flags),
+        "counts_by_level": by_level,
         "by_detector_layer_coord": by_layer,
         "not_comparable_by_status": not_comparable.to_dict(orient="records"),
     }
@@ -248,11 +281,11 @@ def build_report(flags: pd.DataFrame, summary: dict) -> str:
         "## Counts",
         markdown_table(list(counts.keys()), [list(counts.values())]),
         markdown_table(
-            ["Detector", "Layer", "Coord", "Comparable", "Flagged", "Mean",
-             "Width", "Not comparable"],
-            [[row["detector"], row["layer"], row["coord"], row["comparable"],
-              row["flagged"], row["flag_mean"], row["flag_width"],
-              row["not_comparable"]]
+            ["Detector", "Layer", "Coord", "Level", "Comparable", "Flagged",
+             "Mean", "Width", "Not comparable"],
+            [[row["detector"], row["layer"], row["coord"], row["level"],
+              row["comparable"], row["flagged"], row["flag_mean"],
+              row["flag_width"], row["not_comparable"]]
              for row in summary["by_detector_layer_coord"]]),
     ]
 
@@ -285,10 +318,28 @@ def build_report(flags: pd.DataFrame, summary: dict) -> str:
 
     sections += [
         "## Caveats",
-        "- About 1300 chip/coordinate tests are made per comparison; at "
-        "z > 1.96 about 5% of unchanged chips pass the significance test by "
-        "chance, so the minimum-shift requirement carries most of the "
-        "rejection of chance flags.",
+        "- About 1300 chip/coordinate tests (plus about 210 stave/ladder "
+        "tests when the table has chip = -1 stave rows, and 30 VERTEX tests "
+        "when track_ntp is present) are made per comparison; at z > 1.96 "
+        "about 5% of unchanged entries pass the significance test by chance, "
+        "so the minimum-shift requirement carries most of the rejection of "
+        "chance flags.",
+        "- MVTX/INTT rows with chip = -1 are fits to the sum of all chips of "
+        "the stave/ladder, so they are not independent of the chip rows. A "
+        "whole-stave shift moves the stave row and most chips together. A "
+        "single chip shifted within the core of the stave distribution pulls "
+        "the stave mean by about its share of the stave entries (about 1/9 "
+        "of its shift for MVTX, 1/4 for INTT); a chip shifted beyond the core "
+        "barely moves it. Stave rows have small errors, so the minimum shift "
+        "decides most of their flags. INTT z stave rows sum the sensors' "
+        "strip-length boxes and are only indicative.",
+        "- VERTEX rows (layer = stave = -1) are track-to-vertex residuals "
+        "whose chip id is the track-phi bin: chip -1 is the distribution of "
+        "all tracks and chip 0-13 are equal track-phi bins over [-pi, pi), "
+        "so they are not independent of each other. A transverse silicon-to-vertex offset appears as a "
+        "sinusoidal dca_xy shift versus phi that can average to almost zero "
+        "in chip -1. The vertex is reconstructed from the same tracks, which "
+        "biases these residuals toward zero.",
         "- The width test has no significance requirement. Check the "
         "'sigma rel signif.' column: values below about 2 indicate a width "
         "change compatible with statistical fluctuation.",
@@ -313,7 +364,7 @@ def main() -> None:
     parser.add_argument("--min-shift", action="append", default=[],
                         metavar="DETECTOR:COORD=MM",
                         help="override a minimum mean shift, e.g. "
-                             "INTT:z=0.5 (repeatable)")
+                             "INTT:z=0.5 or VERTEX:dca_xy=0.02 (repeatable)")
     args = parser.parse_args()
 
     if len(args.tables) < 2:

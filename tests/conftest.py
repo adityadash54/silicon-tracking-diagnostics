@@ -34,6 +34,30 @@ def synthetic_outputs(tmp_path_factory) -> Path:
 
 
 @pytest.fixture()
+def flags_with_stave_rows(synthetic_outputs):
+    """Iter0 vs Iter1 flags plus two MVTX stave rows (chip -1): a flagged one
+    on a stave with flagged chips (layer 1, stave 4, rphi) and a flagged one
+    on a stave without chip flags. Returns (flags, quiet stave key)."""
+    import pandas as pd
+
+    flags = pd.read_csv(synthetic_outputs / "flags_Iter0_vs_Iter1.csv",
+                        dtype={"detector": str, "coord": str, "reason": str})
+    keys = ["detector", "layer", "stave", "coord"]
+    mvtx = flags.loc[flags["detector"] == "MVTX"]
+    quiet = (mvtx.groupby(keys)["flagged"].sum()
+             .loc[lambda counts: counts == 0].index[0])
+    rows = []
+    for key, delta in (((("MVTX", 1, 4, "rphi")), 0.012), (quiet, 0.007)):
+        row = flags.loc[(flags[keys] == key).all(axis=1)].iloc[0].copy()
+        row["chip"] = -1
+        row["delta_mu_mm"] = delta
+        row[["comparable", "flagged", "flag_mean"]] = True
+        row["flag_width"] = False
+        rows.append(row)
+    return pd.concat([flags, pd.DataFrame(rows)], ignore_index=True), quiet
+
+
+@pytest.fixture()
 def findings_file(tmp_path, synthetic_outputs) -> Path:
     """A findings file covering two Iter1 findings, next to its flags table."""
     flags = synthetic_outputs / "flags_Iter0_vs_Iter1.csv"

@@ -21,6 +21,8 @@ import pandas as pd
 
 from synthetic.make_synthetic_fit_tables import matches
 
+# chip: chip/sensor id; for VERTEX rows (not in the synthetic eval cases) it
+# is the track-phi bin.
 KEY = ["detector", "layer", "stave", "chip", "coord"]
 FLAG_GROUPS = {"A", "B", "C", "D"}
 MATCH_FRACTION = 0.8
