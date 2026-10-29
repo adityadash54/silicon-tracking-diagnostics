@@ -1,0 +1,2 @@
+label,listfile,coord,fit_status,phi_bins_used,amplitude_mm,amplitude_err_mm,phi0_rad,phi0_err_rad,constant_mm,constant_err_mm,vertex_minus_track_x_mm,vertex_minus_track_x_err_mm,vertex_minus_track_y_mm,vertex_minus_track_y_err_mm,chi2,ndf
+Iter1,../list_Iter1.txt,dca_xy,ok,14,0.022211563,0.00035340201,0.47450125,0.015876762,0.00023296364,0.00024964012,0.019757645,0.0003540086,0.010148349,0.00035203877,16.497439,11

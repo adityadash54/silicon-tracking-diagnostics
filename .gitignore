@@ -16,6 +16,13 @@ dist/
 coresoftware/
 tracking_docs/
 
+# Your input tables and comparison outputs stay local (inputs/README.md,
+# runs/README.md)
+/inputs/*
+!/inputs/README.md
+/runs/*
+!/runs/README.md
+
 # Data and generated outputs
 *.root
 *.pdf
@@ -37,6 +44,7 @@ dialogue_*.md
 dialogue_*.json
 synthetic/output/
 synthetic/pipeline_output/
+synthetic/stavechip_demo/output/
 /stdiag_manual/
 
 # ROOT ACLiC build products
@@ -49,9 +57,15 @@ synthetic/pipeline_output/
 
 # Reference fit tables of the synthetic pipeline (synthetic/reference/README.md)
 !/synthetic/reference/residual_fits_*.csv
+!/synthetic/stavechip_demo/reference/**/residual_fits_*.csv
 
 # Eval runs (keep cases, runner and grader; not transcripts or reports)
 evals/**/runs/
 evals/**/traces/
 evals/**/report.html
 evals/**/trajectory/
+
+# Example tables in inputs/ (synthetic stave/chip demo; inputs/README.md).
+# Kept last so they win over /inputs/* and residual_fits_*.csv above.
+!/inputs/residual_fits_example_iter0.csv
+!/inputs/residual_fits_example_iter1.csv
