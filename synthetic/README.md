@@ -1,7 +1,8 @@
 # Synthetic test
 
 End-to-end test with known injected changes. Synthetic per-chip fit tables
-(standing in for `macros/fit_residuals_to_table.C`) are run through the real
+(standing in for the CSV output of `macros/plot_fits_overlaid_stavechip.C`)
+are run through the real
 comparison (`stdiag.compare_runs`) and triage (`stdiag.triage_agent`), and
 the flags are checked against the injected truth. For the framework itself,
 see [`../README.md`](../README.md).
@@ -109,13 +110,38 @@ keeping live in `synthetic/example_reports/`:
 | `example_reports/triage_report_Iter0_vs_Iter{1,2}.md` | Written by hand in the Claude Code session that built this test. That session also designed the injections, so these are **not** blind. |
 | `example_reports/blind_triage_report_Iter0_vs_Iter{1,2}.md` | Blind reports from the first live `--ai-claude-code` run (2026-10-02), made before the notable-unflagged block and `--strict-mcp-config` were added. One stray line about claude.ai connectors was removed from the Iter1 report. |
 
+## Full pipeline from ROOT files
+
+`run_full_pipeline.sh` runs the same nine injections one level earlier:
+`make_synthetic_ntp.C` writes `ntp` and `track_ntp` clusters (about 2.6M per
+label) instead of fit results, and the real fit macro
+`macros/plot_fits_overlaid_stavechip.C` makes the tables. It needs ROOT and
+covers the iterative Gaussian fit, the INTT z box fit (strips drawn as 16/20
+mm boxes), the whole-stave rows (`chip = −1`) and the VERTEX rows. One set of
+its tables is committed in `reference/`, with the expected results. See
+"Try the whole pipeline on synthetic data" in
+[`../README.md`](../README.md#try-the-whole-pipeline-on-synthetic-data).
+
+Differences from the fit-table generator:
+- An entry override (40 entries, 5 entries) covers both coordinates of a
+  chip, since a cluster carries both residuals.
+- The truth check accepts a few rows either way: the 40-entry chip in both
+  coordinates, stave rows of low-statistics ladders, and stave rows with
+  only some chips changed when the expected change is near a threshold. For
+  example, one INTT sensor shifted by 40 µm widens its ladder's summed r-φ
+  distribution by about 22%.
+
+The nominal widths in both generators are approximately pitch/√12 from public
+specifications (ALPIDE 26.88 × 29.24 µm pixels; INTT 78 µm strip pitch, 16 mm
+strips), slightly widened for the track uncertainty. No real-data values are
+used.
+
 ## Not covered by this test
 
-- The ROOT macro `macros/fit_residuals_to_table.C` (needs ROOT and real `ntp`
-  files). The synthetic tables replace its output, so the iterative fit
-  itself is untested.
-- Non-Gaussian shapes: INTT z residuals are closer to a box than a Gaussian,
-  and real distributions have tails; the synthetic fits are ideal.
+- Real `ntp` files: the fit macro has only run on synthetic clusters (with
+  `run_full_pipeline.sh`); `run_test.sh` skips it altogether.
+- Real shapes: the synthetic residuals are Gaussian (or ideal boxes for INTT
+  z, with 2% flat outliers); real distributions have tails.
 - The triage API backend (`--ai`): only its dry run was executed here. The
   Claude Code backend (`--ai-claude-code`) was run live on 2026-10-02 and its
   blind reports found every flagged injection. That run's prompt held only
