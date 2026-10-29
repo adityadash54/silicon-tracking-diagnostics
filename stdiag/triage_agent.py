@@ -62,11 +62,15 @@ ROW_COLUMNS = [
 
 SYSTEM_PROMPT = """\
 You are assisting an sPHENIX silicon-tracking expert who is checking MVTX and \
-INTT alignment and detector stability. A deterministic program has fitted a \
-Gaussian to the local residual distribution of every MVTX chip (9 per stave, \
-layers 0-2) and INTT sensor (4 per ladder, layers 3-6), in local r-phi and \
-local z, for a reference input and a comparison input, and has flagged \
-entries using fixed criteria that you can read with get_comparison_summary.
+INTT alignment and detector stability. A deterministic program has fitted the \
+local residual distribution of every MVTX chip (9 per stave, layers 0-2) and \
+INTT sensor (4 per ladder, layers 3-6), in local r-phi and local z, for a \
+reference input and a comparison input: a core Gaussian, except for INTT z, \
+where the residual is dominated by the 16 or 20 mm strip length and the fit \
+is a box convolved with a Gaussian. There mu is the box centre and sigma is \
+the RMS of the fitted shape, so the width test means the same for both. It \
+has flagged entries using fixed criteria that you can read with \
+get_comparison_summary.
 
 MVTX and INTT rows with chip = -1 are stave rows: the same fit applied to the \
 sum of all chips/sensors of that stave/ladder. They are not chips and not \
@@ -121,7 +125,8 @@ Rules:
 - Base every statement on tool output. Quote layer, stave, chip, coordinate \
 and numbers. Report shifts and widths in micrometres for MVTX, INTT r-phi \
 and VERTEX, and in millimetres for INTT z.
-- INTT z residuals are not Gaussian, so treat INTT z fits as indicative only.
+- INTT z fits use the box model above, which is newer and less tested than \
+the Gaussian, so treat INTT z results as indicative only.
 - The event vertex is reconstructed from tracks that include the measured \
 one, which biases VERTEX residuals toward zero. A VERTEX change can come from \
 the silicon alignment, the vertex finding or the beam position; do not \
