@@ -17,9 +17,15 @@ stave/ladder ("stave rows"); they get the same criteria and minimum shifts as
 the chips and are counted separately (level "stave") in the summary.
 
 Usage:
-  python -m stdiag.compare_runs residual_fits_Iter0.csv residual_fits_Iter1.csv \
-      [residual_fits_Iter2.csv ...] [--out-dir DIR]
+  python -m stdiag.compare_runs inputs/residual_fits_Iter0.csv \
+      inputs/residual_fits_Iter1.csv [inputs/residual_fits_Iter2.csv ...]
+  python -m stdiag.compare_runs TABLE TABLE [...] --out-dir DIR
 The first table is the reference; every other table is compared with it.
+Without --out-dir, each comparison of residual_fits_<a>.csv with
+residual_fits_<b>.csv goes to its own folder runs/<a>_vs_<b> (see
+stdiag.paths.RUNS_DIR). That folder is deleted and written afresh on every
+run, so earlier triage and review files in it are removed with it. With
+--out-dir, all outputs go to DIR and nothing is deleted.
 """
 
 from __future__ import annotations
@@ -29,11 +35,14 @@ import datetime as dt
 import hashlib
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from stdiag.paths import RUNS_DIR
 
 # chip is the chip/sensor id for MVTX/INTT (-1 = whole stave/ladder) and the
 # track-phi bin for VERTEX rows (-1 = all tracks, 0-13 = phi bins over
@@ -84,6 +93,41 @@ def sha256sum(path: Path) -> str:
 
 def sanitize_for_filename(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", text) or "input"
+
+
+TABLE_NAME = re.compile(r"residual_fits_(.+)\.csv")
+
+
+def table_name(path: Path) -> str:
+    """Return <a> of residual_fits_<a>.csv (the name used for run folders)."""
+    match = TABLE_NAME.fullmatch(path.name)
+    if not match:
+        sys.exit(f"ERROR: {path.name} is not named residual_fits_<name>.csv; "
+                 "rename it or give --out-dir")
+    return match.group(1)
+
+
+def run_dir_for(reference: Path, comparison: Path) -> Path:
+    """runs/<a>_vs_<b> for residual_fits_<a>.csv vs residual_fits_<b>.csv."""
+    name = (f"{sanitize_for_filename(table_name(reference))}_vs_"
+            f"{sanitize_for_filename(table_name(comparison))}")
+    return RUNS_DIR / name
+
+
+def fresh_run_dir(run_dir: Path, inputs: list[Path]) -> None:
+    """Delete and recreate one comparison folder directly under RUNS_DIR."""
+    if run_dir.resolve().parent != RUNS_DIR:
+        sys.exit(f"ERROR: refusing to replace {run_dir}: not directly in "
+                 f"{RUNS_DIR}")
+    for path in inputs:
+        if run_dir.resolve() in path.resolve().parents:
+            sys.exit(f"ERROR: input {path} is inside {run_dir}, which is "
+                     "replaced on every run; keep inputs in inputs/")
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+        print(f"Replaced {run_dir} (its earlier contents, including any "
+              "triage and review files, were deleted)")
+    run_dir.mkdir(parents=True)
 
 
 def load_fit_table(path: Path) -> pd.DataFrame:
@@ -358,7 +402,9 @@ def main() -> None:
     parser.add_argument("tables", nargs="+", type=Path,
                         help="residual_fits_<label>.csv files; first is the "
                              "reference")
-    parser.add_argument("--out-dir", type=Path, default=Path("."))
+    parser.add_argument("--out-dir", type=Path,
+                        help="write every output here (default: a fresh "
+                             "runs/<a>_vs_<b> per comparison)")
     parser.add_argument("--sigma-rel-threshold", type=float, default=0.20)
     parser.add_argument("--z-threshold", type=float, default=1.96)
     parser.add_argument("--min-shift", action="append", default=[],
@@ -390,9 +436,25 @@ def main() -> None:
                 "listfile": table["listfile"].iloc[0],
                 "csv": path.name, "sha256": sha256sum(path)}
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    # Check every name before anything is deleted or written.
+    if args.out_dir is None:
+        out_dirs = [run_dir_for(args.tables[0], path)
+                    for path in args.tables[1:]]
+        for path, table in zip(args.tables, tables):
+            if sanitize_for_filename(table_name(path)) != sanitize_for_filename(
+                    table["label"].iloc[0]):
+                print(f"Note: {path.name} holds label "
+                      f"'{table['label'].iloc[0]}'; the folder is named from "
+                      "the file, the files inside from the label")
+    else:
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        out_dirs = [args.out_dir] * (len(args.tables) - 1)
+
     reference = tables[0]
-    for path, comparison in zip(args.tables[1:], tables[1:]):
+    for path, comparison, out_dir in zip(args.tables[1:], tables[1:],
+                                         out_dirs):
+        if args.out_dir is None:
+            fresh_run_dir(out_dir, args.tables)
         flags = compare_tables(reference, comparison,
                                args.sigma_rel_threshold, args.z_threshold,
                                minimum_shift)
@@ -402,9 +464,9 @@ def main() -> None:
 
         stem = (f"{sanitize_for_filename(inputs['reference']['label'])}_vs_"
                 f"{sanitize_for_filename(inputs['comparison']['label'])}")
-        flags_path = args.out_dir / f"flags_{stem}.csv"
-        summary_path = args.out_dir / f"summary_{stem}.json"
-        report_path = args.out_dir / f"report_{stem}.md"
+        flags_path = out_dir / f"flags_{stem}.csv"
+        summary_path = out_dir / f"summary_{stem}.json"
+        report_path = out_dir / f"report_{stem}.md"
         flags.to_csv(flags_path, index=False)
         summary_path.write_text(json.dumps(summary, indent=2) + "\n")
         report_path.write_text(build_report(flags, summary))

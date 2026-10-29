@@ -12,12 +12,18 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_module(module: str, *args: str, cwd: Path | None = None) -> str:
+def run_module(module: str, *args: str, cwd: Path | None = None,
+               env: dict[str, str] | None = None,
+               check: bool = True) -> subprocess.CompletedProcess | str:
+    """Run `python -m module`; return stdout, or the whole result with
+    check=False."""
     result = subprocess.run(
         [sys.executable, "-m", module, *args], cwd=cwd or REPO_ROOT,
         capture_output=True, text=True,
         env={"PYTHONPATH": str(REPO_ROOT), "PYTHONDONTWRITEBYTECODE": "1",
-             "PATH": "/usr/bin:/bin"})
+             "PATH": "/usr/bin:/bin", **(env or {})})
+    if not check:
+        return result
     assert result.returncode == 0, result.stderr
     return result.stdout
 

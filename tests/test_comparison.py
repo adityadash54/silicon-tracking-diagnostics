@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -65,3 +66,63 @@ def test_min_shift_override():
     assert shifts[("INTT", "z")] == 0.5 and shifts[("MVTX", "rphi")] == 0.005
     with pytest.raises(SystemExit):
         parse_min_shift_overrides(["TPC:z=1"])
+
+
+def copy_tables(synthetic_outputs, folder, names):
+    """Copy the Iter0/1/2 tables into folder as residual_fits_<name>.csv."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for label, name in names.items():
+        (folder / f"residual_fits_{name}.csv").write_bytes(
+            (synthetic_outputs / f"residual_fits_{label}.csv").read_bytes())
+    return [str(folder / f"residual_fits_{name}.csv") for name in names.values()]
+
+
+def test_default_output_is_a_fresh_run_folder(synthetic_outputs, tmp_path):
+    runs = tmp_path / "runs"
+    env = {"STDIAG_RUNS_DIR": str(runs)}
+    tables = copy_tables(synthetic_outputs, tmp_path / "inputs",
+                         {"Iter0": "Iter0", "Iter1": "Iter1", "Iter2": "Iter2"})
+    run_module("stdiag.compare_runs", *tables, env=env)
+    assert sorted(path.name for path in runs.iterdir()) == [
+        "Iter0_vs_Iter1", "Iter0_vs_Iter2"]
+    folder = runs / "Iter0_vs_Iter1"
+    assert sorted(path.name for path in folder.iterdir()) == [
+        "flags_Iter0_vs_Iter1.csv", "report_Iter0_vs_Iter1.md",
+        "summary_Iter0_vs_Iter1.json"]
+
+    (folder / "findings_Iter0_vs_Iter1.json").write_text("{}")
+    output = run_module("stdiag.compare_runs", *tables[:2], env=env)
+    assert "Replaced" in output
+    assert not (folder / "findings_Iter0_vs_Iter1.json").exists()
+    assert (folder / "flags_Iter0_vs_Iter1.csv").exists()
+
+
+def test_run_folder_is_named_from_the_files(synthetic_outputs, tmp_path):
+    runs = tmp_path / "runs"
+    tables = copy_tables(synthetic_outputs, tmp_path / "inputs",
+                         {"Iter0": "ana.499", "Iter1": "ana.500"})
+    output = run_module("stdiag.compare_runs", *tables,
+                        env={"STDIAG_RUNS_DIR": str(runs)})
+    assert "Note: residual_fits_ana.499.csv holds label 'Iter0'" in output
+    assert (runs / "ana.499_vs_ana.500" / "flags_Iter0_vs_Iter1.csv").exists()
+
+
+@pytest.mark.parametrize("problem", ["bad_name", "input_in_run_folder"])
+def test_refused_before_anything_is_deleted(synthetic_outputs, tmp_path,
+                                            problem):
+    runs = tmp_path / "runs"
+    keep = runs / "Iter0_vs_Iter1" / "keep.txt"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("earlier run")
+    tables = copy_tables(synthetic_outputs, tmp_path / "inputs",
+                         {"Iter0": "Iter0", "Iter1": "Iter1"})
+    if problem == "bad_name":
+        tables[1] = str(Path(tables[1]).rename(tmp_path / "inputs" / "iter1.csv"))
+        expected = "is not named residual_fits_<name>.csv"
+    else:
+        tables[1] = str(Path(tables[1]).rename(keep.parent / "residual_fits_Iter1.csv"))
+        expected = "which is replaced on every run"
+    result = run_module("stdiag.compare_runs", *tables,
+                        env={"STDIAG_RUNS_DIR": str(runs)}, check=False)
+    assert result.returncode != 0 and expected in result.stderr
+    assert keep.read_text() == "earlier run"
